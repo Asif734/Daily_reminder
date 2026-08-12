@@ -43,3 +43,20 @@ class CompleteRequest(BaseModel):
 class ScanResult(BaseModel):
     created: int
     state_changes: int
+
+
+class ReportOccurrence(OccurrenceView):
+    user_id: UUID
+    user_name: str
+
+
+class ReportPage(BaseModel):
+    items: list[ReportOccurrence]
+    total: int
+
+
+class DashboardStats(BaseModel):
+    pending_today: int
+    completed_today: int
+    overdue: int
+    snoozed: int

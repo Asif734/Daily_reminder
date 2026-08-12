@@ -19,6 +19,14 @@ Tauri 2 member client with a React UI and Rust-owned SQLite cache/outbox.
 
 Install Rust using `rustup`, plus the platform prerequisites from the Tauri 2 documentation.
 
+Copy the desktop environment file and set the backend URL before running or packaging:
+
+```bash
+cp .env.example .env
+```
+
+Both values should point to the same API gateway. Use an HTTPS address for production builds.
+
 ```bash
 npm ci
 npm test
@@ -27,6 +35,5 @@ npm run tauri dev
 ```
 
 Windows packaging should be performed on a Windows CI runner. macOS packaging requires an
-Apple signing identity for distributable builds. The backend base URL currently defaults to
-`http://localhost:8000` for local development; production builds should inject a managed HTTPS
-endpoint through a compile-time configuration module.
+Apple signing identity for distributable builds. Backend addresses are supplied through
+`VITE_API_BASE_URL` and `DESKTOP_API_BASE_URL` in the desktop `.env` file.

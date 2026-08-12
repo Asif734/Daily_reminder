@@ -3,17 +3,21 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from reminder_common.security import require_principal, utc_now
-from sqlalchemy import and_, or_, select
+from reminder_common.security import require_admin, require_principal, utc_now
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.reminders import add_audit, add_outbox, db
 from app.models.reminder import Occurrence, OccurrenceStatus, Reminder, SnoozeEvent
 from app.schemas.occurrences import (
     CompleteRequest,
+    DashboardStats,
     OccurrencePage,
     OccurrenceView,
+    ReportOccurrence,
+    ReportPage,
     ScanResult,
     SnoozeRequest,
 )
@@ -116,6 +120,41 @@ async def my_reminder_section(
     section: Literal["today", "upcoming", "overdue", "completed"], request: Request, session: Session
 ) -> OccurrencePage:
     return await list_for_member(request, session, section)
+
+
+@router.get("/api/v1/reports/occurrences", response_model=ReportPage)
+async def occurrence_report(request: Request, session: Session) -> ReportPage:
+    require_admin(request)
+    rows = (await session.execute(select(Occurrence, Reminder).join(Reminder, Reminder.id == Occurrence.reminder_id).where(Reminder.deleted_at.is_(None)).order_by(Occurrence.updated_at.desc()).limit(200))).all()
+    total = await session.scalar(select(func.count()).select_from(Occurrence))
+    user_ids = {item.user_id for item, _ in rows}
+    names: dict[UUID, str] = {}
+    headers = {"Authorization": request.headers["Authorization"]}
+    async with httpx.AsyncClient(timeout=10) as client:
+        for user_id in user_ids:
+            response = await client.get(
+                f"{request.app.state.settings.auth_service_url}/api/v1/users/{user_id}",
+                headers=headers,
+            )
+            if response.status_code == 200:
+                names[user_id] = response.json()["name"]
+    return ReportPage(items=[ReportOccurrence(**occurrence_view(item, reminder).model_dump(), user_id=item.user_id, user_name=names.get(item.user_id, "Unknown member")) for item, reminder in rows], total=total or 0)
+
+
+@router.get("/api/v1/reports/dashboard", response_model=DashboardStats)
+async def dashboard_stats(request: Request, session: Session) -> DashboardStats:
+    require_admin(request)
+    now = utc_now()
+    start = datetime.combine(now.date(), datetime.min.time(), UTC)
+    end = start + timedelta(days=1)
+    async def count(*filters: object) -> int:
+        return (await session.scalar(select(func.count()).select_from(Occurrence).where(*filters))) or 0
+    return DashboardStats(
+        pending_today=await count(Occurrence.scheduled_at >= start, Occurrence.scheduled_at < end, Occurrence.status == OccurrenceStatus.PENDING),
+        completed_today=await count(Occurrence.completed_at >= start, Occurrence.completed_at < end),
+        overdue=await count(Occurrence.status == OccurrenceStatus.OVERDUE),
+        snoozed=await count(Occurrence.status == OccurrenceStatus.SNOOZED),
+    )
 
 
 @router.post("/api/v1/reminder-occurrences/{occurrence_id}/complete", response_model=OccurrenceView)

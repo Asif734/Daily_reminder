@@ -1,4 +1,4 @@
-import type { MemberPage, ReminderPage, TokenPair } from "./types";
+import type { DashboardStats, MemberPage, ReminderPage, ReportPage, TokenPair } from "./types";
 
 const ACCESS = "reminder_access";
 const REFRESH = "reminder_refresh";
@@ -24,4 +24,6 @@ export async function api<T>(path:string, init:RequestInit = {}):Promise<T> {
 export const queries = {
   members: (search="",active="") => api<MemberPage>(`/users?search=${encodeURIComponent(search)}${active ? `&active=${active}`:""}`),
   reminders: () => api<ReminderPage>("/reminders"),
+  reports: () => api<ReportPage>("/reports/occurrences"),
+  dashboardStats: () => api<DashboardStats>("/reports/dashboard"),
 };

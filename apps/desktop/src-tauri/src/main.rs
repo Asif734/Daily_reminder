@@ -1,1 +1,3 @@
-fn main(){reminder_desktop_lib::run()}
+fn main() {
+    reminder_desktop_lib::run()
+}

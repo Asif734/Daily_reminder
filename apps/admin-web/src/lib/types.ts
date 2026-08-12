@@ -5,3 +5,7 @@ export type ReminderType = "DAILY" | "MONTHLY";
 export type Reminder = { id:string; title:string; description:string|null; type:ReminderType; reminder_time:string; monthly_due_day:number|null; days_before:number; priority:"LOW"|"NORMAL"|"HIGH"; is_active:boolean; created_by:string; assigned_user_ids:string[]; created_at:string; updated_at:string };
 export type ReminderPage = { items:Reminder[]; total:number; limit:number; offset:number };
 export type TokenPair = { access_token:string; refresh_token:string; token_type:string };
+export type OccurrenceStatus = "PENDING" | "SNOOZED" | "COMPLETED" | "OVERDUE";
+export type ReportOccurrence = { id:string; reminder_id:string; user_id:string; user_name:string; title:string; description:string|null; type:ReminderType; priority:"LOW"|"NORMAL"|"HIGH"; scheduled_date:string; scheduled_at:string; due_at:string; status:OccurrenceStatus; snoozed_until:string|null; completed_at:string|null; updated_at:string };
+export type ReportPage = { items:ReportOccurrence[]; total:number };
+export type DashboardStats = { pending_today:number; completed_today:number; overdue:number; snoozed:number };
