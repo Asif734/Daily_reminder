@@ -1,0 +1,2 @@
+import { AppShell } from "@/components/app-shell";
+export default function Settings(){return <AppShell title="Settings" subtitle="Administrative preferences and security."><div className="card p-6 max-w-2xl"><h2 className="font-semibold text-lg">Security</h2><p className="muted text-sm mt-2">Password changes are available through the authenticated API. Additional organization settings will be introduced with production deployment configuration.</p></div></AppShell>}

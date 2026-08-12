@@ -1,0 +1,12 @@
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { BellRing } from "lucide-react";
+import { api, tokenStore } from "@/lib/api";
+import type { TokenPair } from "@/lib/types";
+
+export default function LoginPage(){
+  const router=useRouter(); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [error,setError]=useState(""); const [busy,setBusy]=useState(false);
+  async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError("");try{const pair=await api<TokenPair>("/auth/login",{method:"POST",body:JSON.stringify({email,password})});tokenStore.save(pair);router.replace("/dashboard");}catch(err){setError(err instanceof Error?err.message:"Login failed");}finally{setBusy(false)}}
+  return <main className="min-h-screen grid lg:grid-cols-2 bg-white"><section className="hidden lg:flex bg-[#123d2f] text-white p-16 flex-col justify-between"><div className="flex items-center gap-3 font-bold text-xl"><span className="bg-white/15 p-2 rounded-xl"><BellRing/></span> Reminder</div><div><p className="uppercase text-xs tracking-[.3em] text-emerald-200 mb-4">Internal operations</p><h1 className="text-5xl font-semibold leading-tight max-w-xl">Keep every important task on time.</h1><p className="text-emerald-100/75 mt-5 max-w-md leading-7">Manage members, recurring schedules, and completion health from one focused workspace.</p></div><p className="text-sm text-emerald-100/55">Secure administrative access</p></section><section className="grid place-items-center p-7"><form onSubmit={submit} className="w-full max-w-sm"><div className="lg:hidden flex items-center gap-2 text-xl font-bold mb-12"><BellRing className="text-emerald-700"/> Reminder</div><p className="text-sm font-bold text-emerald-700">ADMIN DASHBOARD</p><h2 className="text-3xl font-semibold mt-2">Welcome back</h2><p className="muted mt-2 mb-8">Sign in with your administrator account.</p><label className="label">Email</label><input className="field mb-5" type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@company.com"/><label className="label">Password</label><input className="field mb-5" type="password" required minLength={8} value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••••••"/>{error&&<p role="alert" className="text-sm text-red-700 bg-red-50 p-3 rounded-lg mb-4">{error}</p>}<button disabled={busy} className="btn btn-primary w-full">{busy?"Signing in…":"Sign in"}</button></form></section></main>
+}

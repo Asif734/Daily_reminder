@@ -1,0 +1,202 @@
+name: reminder-platform
+
+x-api-common: &api-common
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: &common-environment
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-reminder}:${POSTGRES_PASSWORD:-change-me-for-production}@postgres:5432/${POSTGRES_DB:-reminder_app}
+    REDIS_URL: redis://redis:6379/0
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  networks: [backend]
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+
+services:
+  admin-web:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: apps/admin-web/Dockerfile
+      args:
+        API_GATEWAY_URL: http://api-gateway:8000
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8000
+    ports:
+      - "${ADMIN_WEB_PORT:-3000}:3000"
+    networks: [backend]
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/login"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-reminder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-for-production}
+      POSTGRES_DB: ${POSTGRES_DB:-reminder_app}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/001-schemas.sql:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  auth-service:
+    <<: *api-common
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: auth-service
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@example.com}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-replace-with-a-strong-password}
+      INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-System Administrator}
+    ports:
+      - "${AUTH_SERVICE_PORT:-8001}:8000"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+
+  user-service:
+    <<: *api-common
+    build:
+      context: .
+      dockerfile: services/user-service/Dockerfile
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: user-service
+    ports:
+      - "${USER_SERVICE_PORT:-8002}:8000"
+
+  reminder-service:
+    <<: *api-common
+    build:
+      context: .
+      dockerfile: services/reminder-service/Dockerfile
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: reminder-service
+    ports:
+      - "${REMINDER_SERVICE_PORT:-8003}:8000"
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+
+  api-gateway:
+    <<: *api-common
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: api-gateway
+      AUTH_SERVICE_URL: http://auth-service:8000
+      USER_SERVICE_URL: http://user-service:8000
+      REMINDER_SERVICE_URL: http://reminder-service:8000
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      user-service:
+        condition: service_healthy
+      reminder-service:
+        condition: service_healthy
+
+  scheduler-worker:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/scheduler-service/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: scheduler-service
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app:celery_app inspect ping -d celery@$${HOSTNAME} --timeout 3 | grep -q pong"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 15s
+
+  scheduler-beat:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: services/scheduler-service/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *common-environment
+      SERVICE_NAME: scheduler-service
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    networks: [backend]
+    depends_on:
+      redis:
+        condition: service_healthy
+      scheduler-worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

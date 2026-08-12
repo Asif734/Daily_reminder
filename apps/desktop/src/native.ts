@@ -1,0 +1,3 @@
+import {invoke} from "@tauri-apps/api/core";
+import type {Occurrence,Session} from "./types";
+export const native={saveSession:(value:Session)=>invoke("save_session",{value}),loadSession:()=>invoke<Session|null>("load_session"),clearSession:()=>invoke("clear_session"),sync:(session:Session)=>invoke<Occurrence[]>("sync_now",{session}),cached:()=>invoke<Occurrence[]>("list_cached"),complete:(id:string,session:Session)=>invoke("complete_occurrence",{id,session}),snooze:(id:string,minutes:number,session:Session)=>invoke("snooze_occurrence",{id,minutes,session}),hide:()=>invoke("hide_main_window"),logout:()=>invoke("logout"),enableAutostart:()=>invoke("enable_autostart")};

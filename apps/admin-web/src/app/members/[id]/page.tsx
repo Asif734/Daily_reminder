@@ -1,0 +1,2 @@
+import { AppShell } from "@/components/app-shell";
+export default async function MemberDetail({params}:{params:Promise<{id:string}>}){const {id}=await params;return <AppShell title="Member details" subtitle="Account and reminder history."><div className="card p-6"><p className="muted text-sm">Member ID</p><p className="font-mono mt-2">{id}</p><p className="muted mt-6">Reminder-history aggregation will appear here when reporting endpoints are enabled.</p></div></AppShell>}

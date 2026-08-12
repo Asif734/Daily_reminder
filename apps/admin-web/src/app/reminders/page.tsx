@@ -1,0 +1,9 @@
+"use client";
+import Link from "next/link";
+import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
+import { AppShell } from "@/components/app-shell";
+import { Empty,Status } from "@/components/status";
+import { api,queries } from "@/lib/api";
+
+export default function Reminders(){const qc=useQueryClient();const list=useQuery({queryKey:["reminders"],queryFn:queries.reminders});const toggle=useMutation({mutationFn:({id,on}:{id:string;on:boolean})=>api(`/reminders/${id}/${on?"enable":"disable"}`,{method:"POST"}),onSuccess:()=>qc.invalidateQueries({queryKey:["reminders"]})});return <AppShell title="Reminders" subtitle="Manage recurring assignments and schedules." action={<Link href="/reminders/new" className="btn btn-primary flex gap-2"><Plus size={18}/>New reminder</Link>}>{list.data?.items.length?<div className="card overflow-x-auto"><table className="w-full text-sm"><thead className="bg-[#f3f7f4] text-left"><tr>{["Title","Type","Assigned","Time","Status","Priority","Actions"].map(x=><th key={x} className="px-5 py-3">{x}</th>)}</tr></thead><tbody>{list.data.items.map(r=><tr key={r.id} className="border-t border-slate-100"><td className="px-5 py-4"><p className="font-medium">{r.title}</p><p className="muted text-xs mt-1 max-w-xs truncate">{r.description}</p></td><td className="px-5 py-4">{r.type}</td><td className="px-5 py-4">{r.assigned_user_ids.length}</td><td className="px-5 py-4">{r.reminder_time.slice(0,5)}</td><td className="px-5 py-4"><Status active={r.is_active}/></td><td className="px-5 py-4">{r.priority}</td><td className="px-5 py-4"><button className="text-emerald-700 font-bold" onClick={()=>toggle.mutate({id:r.id,on:!r.is_active})}>{r.is_active?"Disable":"Enable"}</button></td></tr>)}</tbody></table></div>:<Empty message={list.isLoading?"Loading reminders…":"No reminders have been created."}/>}</AppShell>}
