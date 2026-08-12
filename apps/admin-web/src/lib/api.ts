@@ -1,11 +1,12 @@
-import type { DashboardStats, MemberPage, ReminderPage, ReportPage, TokenPair } from "./types";
+import type { CurrentUser, DashboardStats, MemberPage, ReminderPage, ReportPage, TokenPair } from "./types";
 
 const ACCESS = "reminder_access";
 const REFRESH = "reminder_refresh";
 export const tokenStore = {
-  access: () => typeof window === "undefined" ? null : sessionStorage.getItem(ACCESS),
-  save: (pair:TokenPair) => { sessionStorage.setItem(ACCESS,pair.access_token); localStorage.setItem(REFRESH,pair.refresh_token); },
-  clear: () => { sessionStorage.removeItem(ACCESS); localStorage.removeItem(REFRESH); },
+  access: () => typeof window === "undefined" ? null : localStorage.getItem(ACCESS),
+  refresh: () => typeof window === "undefined" ? null : localStorage.getItem(REFRESH),
+  save: (pair:TokenPair) => { localStorage.setItem(ACCESS,pair.access_token); localStorage.setItem(REFRESH,pair.refresh_token); },
+  clear: () => { localStorage.removeItem(ACCESS); localStorage.removeItem(REFRESH); },
 };
 
 export async function api<T>(path:string, init:RequestInit = {}):Promise<T> {
@@ -20,6 +21,11 @@ export async function api<T>(path:string, init:RequestInit = {}):Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+export async function restoreSession():Promise<CurrentUser|null> {
+  const validate = async () => api<CurrentUser>("/auth/me");
+  try { const user=await validate();if(user.role!=="ADMIN"||!user.is_active)throw new Error();return user; }
+  catch { const refreshToken=tokenStore.refresh();if(!refreshToken){tokenStore.clear();return null}try{const pair=await api<TokenPair>("/auth/refresh",{method:"POST",body:JSON.stringify({refresh_token:refreshToken})});tokenStore.save(pair);const user=await validate();if(user.role!=="ADMIN"||!user.is_active)throw new Error();return user}catch{tokenStore.clear();return null} }
 }
 export const queries = {
   members: (search="",active="") => api<MemberPage>(`/users?search=${encodeURIComponent(search)}${active ? `&active=${active}`:""}`),

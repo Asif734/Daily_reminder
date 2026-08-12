@@ -36,7 +36,7 @@ def request_id(request: Request) -> str | None:
 
 async def get_member(session: AsyncSession, user_id: UUID) -> User:
     user = await session.get(User, user_id)
-    if user is None or user.role is not Role.MEMBER:
+    if user is None or user.role is not Role.MEMBER or user.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Member was not found")
     return user
 
@@ -51,7 +51,7 @@ async def list_members(
     offset: int = Query(default=0, ge=0),
 ) -> MemberPage:
     require_admin(request)
-    filters = [User.role == Role.MEMBER]
+    filters = [User.role == Role.MEMBER, User.deleted_at.is_(None)]
     if search:
         term = f"%{search.strip().lower()}%"
         filters.append(or_(func.lower(User.name).like(term), func.lower(User.email).like(term)))
@@ -170,6 +170,17 @@ async def deactivate(user_id: UUID, request: Request, session: Session) -> Membe
 @router.post("/{user_id}/activate", response_model=MemberView)
 async def activate(user_id: UUID, request: Request, session: Session) -> MemberView:
     return await set_active(user_id, True, request, session)
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_member(user_id: UUID, request: Request, session: Session) -> None:
+    actor = require_admin(request)
+    user = await get_member(session, user_id)
+    user.is_active = False
+    user.deleted_at = utc_now()
+    await session.execute(update(RefreshToken).where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None)).values(revoked_at=utc_now()))
+    record_audit(session, actor_id=actor.user_id, action="ADMIN_REMOVED_USER", resource_type="user", resource_id=user.id, request_id=request_id(request), metadata={"email": user.email})
+    await session.commit()
 
 
 @router.post("/{user_id}/reset-password", status_code=status.HTTP_204_NO_CONTENT)

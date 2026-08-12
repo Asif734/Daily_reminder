@@ -50,6 +50,10 @@ class ReminderUpdate(BaseModel):
     priority: Priority | None = None
 
 
+class AddAssignments(BaseModel):
+    user_ids: list[UUID] = Field(min_length=1, max_length=1000)
+
+
 class ReminderView(BaseModel):
     id: UUID
     title: str

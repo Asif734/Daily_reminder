@@ -41,7 +41,7 @@ def view(user: User) -> CurrentUser:
 @router.post("/login", response_model=TokenPair)
 async def login(body: LoginRequest, session: Session) -> TokenPair:
     user = await user_by_email(session, str(body.email))
-    if user is None or not verify_password(body.password, user.password_hash):
+    if user is None or user.deleted_at is not None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User account is disabled")

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.reminder import Assignment, OutboxEvent, Reminder, ReminderType
 from app.schemas.reminders import (
     AssignmentMode,
+    AddAssignments,
     ReminderCreate,
     ReminderPage,
     ReminderUpdate,
@@ -263,6 +264,31 @@ async def set_enabled(
 @router.post("/{reminder_id}/enable", response_model=ReminderView)
 async def enable(reminder_id: UUID, request: Request, session: Session) -> ReminderView:
     return await set_enabled(reminder_id, True, request, session)
+
+
+@router.post("/{reminder_id}/assignments", response_model=ReminderView)
+async def add_assignments(reminder_id: UUID, body: AddAssignments, request: Request, session: Session) -> ReminderView:
+    principal = require_admin(request)
+    reminder = await get_reminder(session, reminder_id)
+    existing = set(await session.scalars(select(Assignment.user_id).where(Assignment.reminder_id == reminder.id)))
+    requested = list(dict.fromkeys(body.user_ids))
+    headers = {"Authorization": request.headers["Authorization"]}
+    added: list[str] = []
+    async with httpx.AsyncClient(timeout=10) as client:
+        for user_id in requested:
+            if user_id in existing:
+                continue
+            response = await client.get(f"{request.app.state.settings.auth_service_url}/api/v1/users/{user_id}", headers=headers)
+            if response.status_code != 200 or not response.json()["is_active"]:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Invalid or inactive member: {user_id}")
+            member = response.json()
+            session.add(Assignment(reminder_id=reminder.id, user_id=user_id, timezone=member["timezone"], created_at=utc_now()))
+            added.append(str(user_id))
+    if added:
+        add_outbox(session, reminder, "reminder.assigned", {"user_ids": added})
+        await add_audit(session, request, actor_id=principal.user_id, action="ADMIN_ASSIGNED_REMINDER", reminder_id=reminder.id, metadata={"user_ids": added})
+        await session.commit()
+    return await reminder_view(session, reminder)
 
 
 @router.post("/{reminder_id}/disable", response_model=ReminderView)
