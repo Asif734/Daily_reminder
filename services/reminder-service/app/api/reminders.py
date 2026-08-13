@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.reminder import Assignment, OutboxEvent, Reminder, ReminderType
 from app.schemas.reminders import (
-    AssignmentMode,
     AddAssignments,
+    AssignmentMode,
     ReminderCreate,
     ReminderPage,
     ReminderUpdate,
@@ -136,6 +136,7 @@ async def create_reminder(body: ReminderCreate, request: Request, session: Sessi
         description=body.description,
         type=body.type,
         reminder_time=body.reminder_time,
+        secondary_reminder_time=body.secondary_reminder_time,
         monthly_due_day=body.monthly_due_day,
         days_before=body.days_before,
         priority=body.priority,
@@ -228,6 +229,12 @@ async def update_reminder(
     changes = body.model_dump(exclude_unset=True)
     if reminder.type is ReminderType.DAILY and changes.get("monthly_due_day") is not None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Daily reminders have no due day")
+    if reminder.type is ReminderType.MONTHLY and changes.get("secondary_reminder_time") is not None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Monthly reminders have no second time")
+    primary = changes.get("reminder_time", reminder.reminder_time)
+    secondary = changes.get("secondary_reminder_time", reminder.secondary_reminder_time)
+    if secondary is not None and secondary == primary:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Daily reminder times must be different")
     for field, value in changes.items():
         setattr(reminder, field, value)
     add_outbox(session, reminder, "reminder.updated", {"fields": list(changes)})

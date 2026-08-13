@@ -45,6 +45,7 @@ class Reminder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(Text)
     type: Mapped[ReminderType] = mapped_column(Enum(ReminderType, schema="reminders"))
     reminder_time: Mapped[time] = mapped_column(Time, nullable=False)
+    secondary_reminder_time: Mapped[time | None] = mapped_column(Time)
     monthly_due_day: Mapped[int | None] = mapped_column(Integer)
     days_before: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     priority: Mapped[Priority] = mapped_column(

@@ -18,6 +18,7 @@ class ReminderCreate(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
     type: ReminderType
     reminder_time: time
+    secondary_reminder_time: time | None = None
     monthly_due_day: int | None = Field(default=None, ge=1, le=31)
     days_before: int = Field(default=5, ge=0, le=31)
     priority: Priority = Priority.NORMAL
@@ -30,6 +31,10 @@ class ReminderCreate(BaseModel):
             raise ValueError("monthly_due_day is required for monthly reminders")
         if self.type is ReminderType.DAILY and self.monthly_due_day is not None:
             raise ValueError("monthly_due_day is only valid for monthly reminders")
+        if self.type is ReminderType.MONTHLY and self.secondary_reminder_time is not None:
+            raise ValueError("secondary_reminder_time is only valid for daily reminders")
+        if self.secondary_reminder_time == self.reminder_time:
+            raise ValueError("daily reminder times must be different")
         unique_users = list(dict.fromkeys(self.user_ids))
         self.user_ids = unique_users
         if self.assignment_mode is AssignmentMode.SINGLE and len(unique_users) != 1:
@@ -45,6 +50,7 @@ class ReminderUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
     reminder_time: time | None = None
+    secondary_reminder_time: time | None = None
     monthly_due_day: int | None = Field(default=None, ge=1, le=31)
     days_before: int | None = Field(default=None, ge=0, le=31)
     priority: Priority | None = None
@@ -60,6 +66,7 @@ class ReminderView(BaseModel):
     description: str | None
     type: ReminderType
     reminder_time: time
+    secondary_reminder_time: time | None
     monthly_due_day: int | None
     days_before: int
     priority: Priority

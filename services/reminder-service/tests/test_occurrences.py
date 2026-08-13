@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime, time
 from uuid import uuid4
 
 from app.models.reminder import Assignment, Reminder, ReminderType
-from app.services.occurrences import occurrence_window
+from app.services.occurrences import occurrence_window, occurrence_windows
 
 
 def reminder(reminder_type: ReminderType, due_day: int | None = None, days_before: int = 5) -> Reminder:
@@ -30,6 +30,14 @@ def test_daily_cycle_is_local_date() -> None:
     assert cycle == "2026-08-12"
     assert scheduled == datetime(2026, 8, 12, 4, tzinfo=UTC)
     assert due == scheduled
+
+
+def test_daily_secondary_time_creates_independent_occurrence() -> None:
+    item = reminder(ReminderType.DAILY)
+    item.secondary_reminder_time = time(16, 30)
+    windows = occurrence_windows(item, assignment("Asia/Dhaka"), date(2026, 8, 12))
+    assert [window[0] for window in windows] == ["2026-08-12", "2026-08-12#2"]
+    assert windows[1][1] == datetime(2026, 8, 12, 10, 30, tzinfo=UTC)
 
 
 def test_monthly_cycle_starts_days_before_due() -> None:
