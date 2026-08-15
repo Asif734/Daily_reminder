@@ -21,6 +21,11 @@ struct Session {
     refresh_token: String,
     expires_at: i64,
 }
+#[derive(Debug, Deserialize)]
+struct TokenPair {
+    access_token: String,
+    refresh_token: String,
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Occurrence {
     id: String,
@@ -260,6 +265,47 @@ async fn send_action(
         .await
         .map_err(|e| e.to_string())
 }
+fn persist_active_session(app: &tauri::AppHandle, session: Session) -> Result<(), String> {
+    keyring::Entry::new("reminder-desktop", "session")
+        .map_err(|error| error.to_string())?
+        .set_password(&serde_json::to_string(&session).unwrap())
+        .map_err(|error| error.to_string())?;
+    *app.state::<ActiveSession>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())? = Some(session);
+    Ok(())
+}
+async fn active_session(app: &tauri::AppHandle) -> Result<Session, String> {
+    let current = app
+        .state::<ActiveSession>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone()
+        .ok_or_else(|| "Authentication is no longer valid".to_string())?;
+    if current.expires_at > Utc::now().timestamp_millis() + 30_000 {
+        return Ok(current);
+    }
+    let pair: TokenPair = reqwest::Client::new()
+        .post(api("auth/refresh"))
+        .json(&serde_json::json!({"refresh_token": current.refresh_token}))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json()
+        .await
+        .map_err(|error| error.to_string())?;
+    let refreshed = Session {
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        expires_at: Utc::now().timestamp_millis() + 14 * 60 * 1000,
+    };
+    persist_active_session(app, refreshed.clone())?;
+    Ok(refreshed)
+}
 fn enqueue(
     c: &Connection,
     kind: &str,
@@ -283,7 +329,9 @@ async fn flush_outbox(db: &Db, s: &Session) -> Result<(), String> {
     let pending = {
         let c = db.0.lock().map_err(|e| e.to_string())?;
         let mut q = c
-            .prepare("SELECT id,kind,occurrence_id,payload FROM outbox ORDER BY created_at")
+            .prepare(
+                "SELECT id,kind,occurrence_id,payload,attempts FROM outbox ORDER BY created_at",
+            )
             .map_err(|e| e.to_string())?;
         let rows = q
             .query_map([], |r| {
@@ -292,6 +340,7 @@ async fn flush_outbox(db: &Db, s: &Session) -> Result<(), String> {
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
+                    r.get::<_, i64>(4)?,
                 ))
             })
             .map_err(|e| e.to_string())?
@@ -299,7 +348,7 @@ async fn flush_outbox(db: &Db, s: &Session) -> Result<(), String> {
             .collect::<Vec<_>>();
         rows
     };
-    for (row_id, kind, id, payload) in pending {
+    for (row_id, kind, id, payload, attempts) in pending {
         let value: serde_json::Value = serde_json::from_str(&payload).unwrap_or_default();
         match send_action(&id, &kind, value, s).await {
             Ok(item) => {
@@ -310,23 +359,25 @@ async fn flush_outbox(db: &Db, s: &Session) -> Result<(), String> {
             }
             Err(_) => {
                 let c = db.0.lock().map_err(|e| e.to_string())?;
-                c.execute(
-                    "UPDATE outbox SET attempts=attempts+1 WHERE id=?1",
-                    [row_id],
-                )
-                .map_err(|e| e.to_string())?;
-                break;
+                if attempts >= 10 {
+                    c.execute("DELETE FROM outbox WHERE id=?1", [row_id])
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    c.execute(
+                        "UPDATE outbox SET attempts=attempts+1 WHERE id=?1",
+                        [row_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    break;
+                }
             }
         }
     }
     Ok(())
 }
 #[tauri::command]
-async fn sync_now(
-    session: Session,
-    db: State<'_, Db>,
-    app: tauri::AppHandle,
-) -> Result<Vec<Occurrence>, String> {
+async fn sync_now(db: State<'_, Db>, app: tauri::AppHandle) -> Result<Vec<Occurrence>, String> {
+    let session = active_session(&app).await?;
     flush_outbox(db.inner(), &session).await?;
     let page: Page = reqwest::Client::new()
         .get(api("me/reminders"))
@@ -349,9 +400,10 @@ async fn sync_now(
 #[tauri::command]
 async fn complete_occurrence(
     id: String,
-    session: Session,
     db: State<'_, Db>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let session = active_session(&app).await?;
     match send_action(&id, "complete", serde_json::json!({}), &session).await {
         Ok(item) => cache(&db.0.lock().unwrap(), &[item]),
         Err(_) => enqueue(
@@ -366,9 +418,10 @@ async fn complete_occurrence(
 async fn snooze_occurrence(
     id: String,
     minutes: i32,
-    session: Session,
     db: State<'_, Db>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let session = active_session(&app).await?;
     let body = serde_json::json!({"minutes":minutes});
     match send_action(&id, "snooze", body.clone(), &session).await {
         Ok(item) => cache(&db.0.lock().unwrap(), &[item]),
