@@ -13,3 +13,11 @@ button,input,select,textarea { font:inherit; }
 .btn-secondary { background:#edf2ef; color:var(--ink); }
 .label { display:block; font-size:.82rem; font-weight:700; margin-bottom:.35rem; }
 .muted { color:var(--muted); }
+.member-picker { max-height:18rem; overflow-y:auto; border:1px solid #cbd6cf; border-radius:9px; background:white; }
+.member-option { display:flex; align-items:center; gap:.75rem; padding:.75rem .9rem; cursor:pointer; border-bottom:1px solid #edf2ef; }
+.member-option:last-child { border-bottom:0; }
+.member-option:hover { background:#f3f7f4; }
+.member-option:has(input:checked) { background:#eef8f3; }
+.member-option input { width:1.05rem; height:1.05rem; accent-color:var(--brand); flex:none; }
+.member-option-all { font-weight:700; background:#f7f9f7; }
+.member-email { display:block; margin-top:.12rem; color:var(--muted); font-size:.82rem; }

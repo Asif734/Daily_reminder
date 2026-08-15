@@ -43,6 +43,6 @@ if __name__ == "__main__":
             "admin credentials are required through arguments or INITIAL_ADMIN_EMAIL and "
             "INITIAL_ADMIN_PASSWORD"
         )
-    if len(args.password) < 12:
-        parser.error("INITIAL_ADMIN_PASSWORD must contain at least 12 characters")
+    if len(args.password) < 6:
+        parser.error("INITIAL_ADMIN_PASSWORD must contain at least 6 characters")
     asyncio.run(seed(args.email, args.password, args.name))

@@ -1,6 +1,7 @@
 """Add member soft deletion."""
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0003_user_soft_delete"

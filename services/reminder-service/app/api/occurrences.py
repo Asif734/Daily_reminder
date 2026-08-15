@@ -75,7 +75,11 @@ async def list_for_member(
     query = (
         select(Occurrence, Reminder)
         .join(Reminder, Reminder.id == Occurrence.reminder_id)
-        .where(Occurrence.user_id == principal.user_id, Reminder.deleted_at.is_(None))
+        .where(
+            Occurrence.user_id == principal.user_id,
+            Reminder.is_active.is_(True),
+            Reminder.deleted_at.is_(None),
+        )
     )
     if section == "today":
         start = datetime.combine(now.date(), datetime.min.time(), UTC)

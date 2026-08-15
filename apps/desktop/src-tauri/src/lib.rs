@@ -1,6 +1,7 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -42,7 +43,13 @@ struct Page {
     items: Vec<Occurrence>,
     next_cursor: Option<String>,
 }
+#[derive(Debug, Serialize, Clone)]
+struct ReminderDelivery {
+    occurrence: Occurrence,
+    session: Session,
+}
 struct Db(Mutex<Connection>);
+struct ActiveSession(Mutex<Option<Session>>);
 fn migrate(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS occurrences(id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated_at TEXT NOT NULL,notified_trigger TEXT);CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,kind TEXT NOT NULL,occurrence_id TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0);CREATE TABLE IF NOT EXISTS sync_state(key TEXT PRIMARY KEY,value TEXT NOT NULL);")?;
     let _ = c.execute(
@@ -57,6 +64,36 @@ fn cache(c: &Connection, items: &[Occurrence]) -> Result<(), String> {
         tx.execute("INSERT INTO occurrences(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![item.id,serde_json::to_string(item).unwrap(),item.updated_at]).map_err(|e|e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())
+}
+fn replace_cache(c: &Connection, items: &[Occurrence]) -> Result<(), String> {
+    let active_ids = items
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<HashSet<_>>();
+    let existing_ids = {
+        let mut statement = c
+            .prepare("SELECT id FROM occurrences")
+            .map_err(|error| error.to_string())?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        ids
+    };
+    let tx = c
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    for id in existing_ids {
+        if !active_ids.contains(id.as_str()) {
+            tx.execute("DELETE FROM occurrences WHERE id=?1", [id])
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    for item in items {
+        tx.execute("INSERT INTO occurrences(id,payload,updated_at) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at",params![item.id,serde_json::to_string(item).unwrap(),item.updated_at]).map_err(|error|error.to_string())?;
+    }
+    tx.commit().map_err(|error| error.to_string())
 }
 fn due_for_notification(
     c: &Connection,
@@ -89,46 +126,84 @@ fn due_for_notification(
         })
         .collect())
 }
-fn start_notification_scheduler(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        let due = {
-            let db = app.state::<Db>();
-            db.0.lock()
-                .ok()
-                .and_then(|c| due_for_notification(&c, Utc::now()).ok())
-                .unwrap_or_default()
-        };
-        for (item, trigger) in due {
+fn deliver_due_reminders(app: &tauri::AppHandle, session: &Session) {
+    let due = {
+        let db = app.state::<Db>();
+        db.0.lock()
+            .ok()
+            .and_then(|c| due_for_notification(&c, Utc::now()).ok())
+            .unwrap_or_default()
+    };
+    for (item, trigger) in due {
+        let popup_shown = app
+            .get_webview_window("reminder")
+            .map(|window| {
+                let emitted = app
+                    .emit_to(
+                        "reminder",
+                        "reminder-due",
+                        ReminderDelivery {
+                            occurrence: item.clone(),
+                            session: session.clone(),
+                        },
+                    )
+                    .is_ok();
+                let shown = window.show().is_ok();
+                let _ = window.set_focus();
+                emitted && shown
+            })
+            .unwrap_or(false);
+        let delivered = if popup_shown {
+            true
+        } else {
             let body = item
                 .description
                 .as_deref()
                 .unwrap_or("Open Reminder to mark this task done or snooze it.");
-            if app
-                .notification()
+            app.notification()
                 .builder()
                 .title(&item.title)
                 .body(body)
                 .show()
                 .is_ok()
-            {
-                let db = app.state::<Db>();
-                if let Ok(c) = db.0.lock() {
-                    let _ = c.execute(
-                        "UPDATE occurrences SET notified_trigger=?1 WHERE id=?2",
-                        params![trigger, item.id],
-                    );
-                };
-            }
+        };
+        if delivered {
+            let db = app.state::<Db>();
+            if let Ok(c) = db.0.lock() {
+                let _ = c.execute(
+                    "UPDATE occurrences SET notified_trigger=?1 WHERE id=?2",
+                    params![trigger, item.id],
+                );
+            };
         }
-        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+}
+fn start_notification_scheduler(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        // Give the hidden popup webview time to register its event listener at startup.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        loop {
+            let session = app
+                .state::<ActiveSession>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|session| session.clone());
+            if let Some(session) = session {
+                deliver_due_reminders(&app, &session);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
     });
 }
 #[tauri::command]
-fn save_session(value: Session) -> Result<(), String> {
+fn save_session(value: Session, active: State<'_, ActiveSession>) -> Result<(), String> {
     keyring::Entry::new("reminder-desktop", "session")
         .map_err(|e| e.to_string())?
         .set_password(&serde_json::to_string(&value).unwrap())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    *active.0.lock().map_err(|error| error.to_string())? = Some(value);
+    Ok(())
 }
 #[tauri::command]
 fn load_session() -> Result<Option<Session>, String> {
@@ -141,12 +216,17 @@ fn load_session() -> Result<Option<Session>, String> {
         Err(e) => Err(e.to_string()),
     }
 }
-#[tauri::command]
-fn clear_session() -> Result<(), String> {
+fn clear_stored_session() -> Result<(), String> {
     keyring::Entry::new("reminder-desktop", "session")
         .map_err(|e| e.to_string())?
         .delete_credential()
         .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn clear_session(active: State<'_, ActiveSession>) -> Result<(), String> {
+    let result = clear_stored_session();
+    *active.0.lock().map_err(|error| error.to_string())? = None;
+    result
 }
 #[tauri::command]
 fn list_cached(db: State<Db>) -> Result<Vec<Occurrence>, String> {
@@ -242,11 +322,15 @@ async fn flush_outbox(db: &Db, s: &Session) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command]
-async fn sync_now(session: Session, db: State<'_, Db>) -> Result<Vec<Occurrence>, String> {
+async fn sync_now(
+    session: Session,
+    db: State<'_, Db>,
+    app: tauri::AppHandle,
+) -> Result<Vec<Occurrence>, String> {
     flush_outbox(db.inner(), &session).await?;
     let page: Page = reqwest::Client::new()
         .get(api("me/reminders"))
-        .bearer_auth(session.access_token)
+        .bearer_auth(&session.access_token)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -257,8 +341,9 @@ async fn sync_now(session: Session, db: State<'_, Db>) -> Result<Vec<Occurrence>
         .map_err(|e| e.to_string())?;
     {
         let c = db.0.lock().map_err(|e| e.to_string())?;
-        cache(&c, &page.items)?;
+        replace_cache(&c, &page.items)?;
     }
+    deliver_due_reminders(&app, &session);
     Ok(page.items)
 }
 #[tauri::command]
@@ -297,13 +382,24 @@ fn hide_main_window(app: tauri::AppHandle) {
     }
 }
 #[tauri::command]
+fn dismiss_reminder_popup(app: tauri::AppHandle) -> Result<(), String> {
+    app.get_webview_window("reminder")
+        .ok_or_else(|| "Reminder window is unavailable".to_string())?
+        .hide()
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
 fn enable_autostart(app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
     app.autolaunch().enable().map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn logout(app: tauri::AppHandle) -> Result<(), String> {
-    let _ = clear_session();
+    let _ = clear_stored_session();
+    if let Ok(mut active) = app.state::<ActiveSession>().0.lock() {
+        *active = None;
+    }
+    let _ = app.emit("logged-out", ());
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
     }
@@ -322,6 +418,7 @@ pub fn run() {
             let c = Connection::open(data.join("cache.sqlite3"))?;
             migrate(&c)?;
             app.manage(Db(Mutex::new(c)));
+            app.manage(ActiveSession(Mutex::new(load_session().ok().flatten())));
             start_notification_scheduler(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open Reminders", true, None::<&str>)?;
             let sync = MenuItem::with_id(app, "sync", "Sync Now", true, None::<&str>)?;
@@ -341,7 +438,10 @@ pub fn run() {
                         let _ = app.emit("sync-requested", ());
                     }
                     "logout" => {
-                        let _ = clear_session();
+                        let _ = clear_stored_session();
+                        if let Ok(mut active) = app.state::<ActiveSession>().0.lock() {
+                            *active = None;
+                        }
                         let _ = app.emit("logged-out", ());
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show();
@@ -359,7 +459,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                if window.label() != "reminder" {
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -371,6 +473,7 @@ pub fn run() {
             complete_occurrence,
             snooze_occurrence,
             hide_main_window,
+            dismiss_reminder_popup,
             enable_autostart,
             logout
         ])

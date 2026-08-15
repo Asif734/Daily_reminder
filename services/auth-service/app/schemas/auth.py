@@ -6,7 +6,7 @@ from reminder_common.security import Role
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=256)
+    password: str = Field(min_length=6, max_length=256)
 
 
 class RefreshRequest(BaseModel):
@@ -19,7 +19,7 @@ class LogoutRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=12, max_length=256)
+    new_password: str = Field(min_length=6, max_length=256)
 
 
 class TokenPair(BaseModel):

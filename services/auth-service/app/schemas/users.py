@@ -17,7 +17,7 @@ def valid_timezone(value: str) -> str:
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: EmailStr
-    temporary_password: str = Field(min_length=12, max_length=256)
+    temporary_password: str = Field(min_length=6, max_length=256)
     is_active: bool = True
     timezone: str = "UTC"
 
@@ -33,7 +33,7 @@ class MemberUpdate(BaseModel):
 
 
 class PasswordReset(BaseModel):
-    temporary_password: str = Field(min_length=12, max_length=256)
+    temporary_password: str = Field(min_length=6, max_length=256)
 
 
 class MemberView(BaseModel):

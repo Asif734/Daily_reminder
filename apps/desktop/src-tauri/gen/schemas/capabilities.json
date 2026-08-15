@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Main member window","local":true,"windows":["main"],"permissions":["core:default","notification:default","autostart:default"]}}
+{"default":{"identifier":"default","description":"Member and reminder windows","local":true,"windows":["main","reminder"],"permissions":["core:default","notification:default","autostart:default"]}}
